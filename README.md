@@ -1,97 +1,108 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# TodoGraphQL
 
-# Getting Started
+A React Native todo app backed by a local GraphQL server. The client is Apollo Client 4 with fully typed operations generated from the running server's schema; the server is Apollo Server 5 on Express 5, persisting to SQLite via Node's built-in `node:sqlite`.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Architecture
 
-## Step 1: Start Metro
-
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
-
-To start the Metro dev server, run the following command from the root of your React Native project:
-
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```
+server/         Apollo Server 5 + Express 5, SQLite (node:sqlite) — http://localhost:4000/graphql
+src/            React Native app, organised by Feature-Sliced Design
+  app/          App root: providers (Apollo, SafeArea) and the navigation stack
+  pages/        Screens — todo-list, create-todo
+  shared/api/   Apollo Client setup, GraphQL documents, and generated types
 ```
 
-## Step 2: Build and run your app
+The app talks to the server over plain HTTP at `http://localhost:4000/graphql`. That URL is hardcoded in `src/shared/api/apollo-client/client.ts` and works as-is on the iOS Simulator; on an Android emulator or a physical device you'll need to point it at `http://10.0.2.2:4000/graphql` or your machine's LAN address respectively.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+Imports use the `@/` alias for `src/`, wired up through `babel-plugin-module-resolver` in `babel.config.js` and mirrored in `tsconfig.json`.
 
-### Android
+## Requirements
+
+- Node 24+ (the server relies on `node:sqlite` and on Node's native TypeScript stripping — it runs `.ts` files directly with no build step)
+- Xcode / Android Studio per the [React Native environment setup](https://reactnative.dev/docs/set-up-your-environment)
+- Ruby bundler for CocoaPods (iOS only)
+
+## Getting started
+
+### 1. Start the GraphQL server
 
 ```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
+cd server
+npm install
+npm run dev      # node --watch index.ts
 ```
 
-### iOS
+It listens on `http://localhost:4000/graphql`. On first run it creates `server/todos.db` and seeds three todos. Open that URL in a browser for the Apollo Sandbox to poke at the schema by hand.
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+### 2. Generate the typed GraphQL client
 
 ```sh
-bundle install
+npm install
+npm run compile  # or: npm run watch
 ```
 
-Then, and every time you update your native dependencies, run:
+**The server must be running first.** `codegen.ts` points at `http://localhost:4000/graphql` and introspects the live server rather than reading `server/schema.graphql`, so codegen fails with a connection error if the server is down. Output lands in `src/shared/api/__generated__/` and is what makes the `gql()` tag return typed documents.
+
+Re-run `npm run compile` whenever you change `server/schema.graphql` or add/edit a document under `src/**`.
+
+### 3. Run the app
 
 ```sh
-bundle exec pod install
-```
+npm start        # Metro, in its own terminal
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
+# iOS — first clone only:
+bundle install && bundle exec pod install
 npm run ios
 
-# OR using Yarn
-yarn ios
+# Android:
+npm run android
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+## The GraphQL schema
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+Defined in `server/schema.graphql` and resolved in `server/resolvers.ts`:
 
-## Step 3: Modify your app
+```graphql
+type Todo {
+  id: ID!
+  title: String!
+  completed: Boolean!
+}
 
-Now that you have successfully run the app, let's make changes!
+type Query {
+  todos: [Todo!]!
+  todo(id: ID!): Todo
+}
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+type Mutation {
+  createTodo(title: String!): Todo!
+  updateTodo(id: ID!, title: String, completed: Boolean): Todo
+  deleteTodo(id: ID!): Boolean!
+}
+```
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+Client-side operations live in `src/shared/api/endpoints/todo/` — split into `todo.query.ts`, `todo.mutations.ts`, and `todo.fragments.ts`. The `Essentials` fragment is registered with the Apollo cache through `createFragmentRegistry`, which is why documents can spread `...Essentials` without importing it.
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+## Scripts
 
-## Congratulations! :tada:
+| Command | What it does |
+| --- | --- |
+| `npm start` | Metro dev server (`npm run start:clear` to reset the cache) |
+| `npm run ios` / `npm run android` | Build and launch the app |
+| `npm run compile` | Generate typed GraphQL documents (needs the server running) |
+| `npm run watch` | Same, in watch mode |
+| `npm run lint` | ESLint |
+| `npm test` | Jest |
 
-You've successfully run and modified your React Native App. :partying_face:
+Server-side, from `server/`: `npm run dev` (watch mode) or `npm start`.
 
-### Now what?
+## Notes
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+- The React Compiler is enabled via `babel-plugin-react-compiler`, so memoisation is largely handled for you — reach for `useMemo`/`useCallback` only when you have a measured reason.
+- `server/todos.db` is local state. Delete it to reset to the seed data.
 
-# Troubleshooting
+## Troubleshooting
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+- **Codegen fails to connect** — the server isn't running. See step 1.
+- **App shows a network error** — check the server is up, and that the URL in `client.ts` is reachable from your target (see Architecture above for the Android/device caveat).
+- **Anything Metro or native build related** — [React Native troubleshooting](https://reactnative.dev/docs/troubleshooting).
